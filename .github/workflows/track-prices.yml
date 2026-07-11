@@ -1,0 +1,32 @@
+name: Track Flight Prices
+
+on:
+  schedule:
+    # Every hour, on the hour (UTC). Actual run time can lag a few minutes;
+    # the script logs its own timestamp so analysis is unaffected.
+    - cron: "0 * * * *"
+  workflow_dispatch: {}  # allows manual runs for testing
+
+jobs:
+  poll-prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Poll flight prices
+        env:
+          TRAVELPAYOUTS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: python track_prices.py
