@@ -34,7 +34,15 @@ ROUTES = [
     {"origin": "HBA", "destination": "MEL"},
 ]
 
-CURRENCY = "aud"
+# NOTE ON CURRENCY: the v2 latest-prices endpoint frequently ignores the
+# currency parameter and returns USD (confirmed empirically for HBA routes:
+# gates like Clickavia/Kiwi/Trip.com quote USD, and the magnitudes match USD
+# not AUD). We therefore request USD explicitly so the label matches reality,
+# and stamp every record with this value. Convert to AUD at analysis time if
+# you want AUD figures. Pattern analysis (hour/day) is unaffected either way,
+# since the currency is consistent across all polls.
+CURRENCY_REQUESTED = "usd"
+CURRENCY = CURRENCY_REQUESTED  # used in the request params
 API_BASE = "https://api.travelpayouts.com"
 
 # How many of the cheapest cached entries to keep per poll
@@ -98,6 +106,20 @@ def fetch_prices_for_dates(token: str, origin: str, destination: str) -> list[di
     return payload.get("data", [])
 
 
+def _is_suspect(entry: dict) -> bool:
+    """Flag likely cache-filler / calendar-estimate rows rather than genuine
+    observed fares. These share a signature: no source agency, zero distance,
+    and a round-midnight found_at (a daily bulk cache refresh rather than a
+    real user search). Kept in the data but marked so analysis can exclude
+    them and work only from genuine observations.
+    """
+    gate = (entry.get("gate") or "").strip()
+    distance = entry.get("distance") or 0
+    found_at = entry.get("found_at") or ""
+    midnight = found_at.endswith("T00:00:00") or found_at.endswith("00:00:00Z")
+    return gate == "" and distance == 0 and midnight
+
+
 def parse_latest(entries) -> list[dict]:
     """Normalise v2 latest-prices records.
 
@@ -123,6 +145,7 @@ def parse_latest(entries) -> list[dict]:
             continue
         parsed.append({
             "price": e.get("value"),
+            "currency": CURRENCY_REQUESTED,  # what we asked for; see note below
             "departure_date": e.get("depart_date"),
             "found_at": e.get("found_at"),  # when this price was observed
             "trip_class": e.get("trip_class"),
@@ -130,6 +153,9 @@ def parse_latest(entries) -> list[dict]:
             "num_changes": e.get("number_of_changes"),
             "distance_km": e.get("distance"),
             "actual": e.get("actual"),
+            # True = likely cache-filler, not a genuine observed fare.
+            # Exclude these when analysing time-of-day patterns.
+            "suspect": _is_suspect(e),
         })
     return parsed
 
@@ -169,19 +195,30 @@ def write_snapshot(db, route: dict, latest: list[dict], for_dates: list[dict],
     route_key = f"{route['origin']}-{route['destination']}"
     doc_id = polled_at.strftime("%Y-%m-%dT%H-%M-%SZ")
 
-    cheapest = min((e["price"] for e in latest if e.get("price")), default=None)
+    # Genuine = observed fares from a real gate, not midnight cache-filler.
+    genuine = [e for e in latest if not e.get("suspect")]
+    suspect_count = len(latest) - len(genuine)
+
+    # Headline cheapest is taken from GENUINE fares only, so a filler row
+    # can't masquerade as the cheapest price. Fall back to all entries only
+    # if every row was suspect (keeps the field populated).
+    pool = genuine if genuine else latest
+    cheapest = min((e["price"] for e in pool if e.get("price")), default=None)
 
     doc = {
         "origin": route["origin"],
         "destination": route["destination"],
+        "currency": CURRENCY_REQUESTED,
         # Actual call time, not the scheduled cron time (Actions can lag)
         "polled_at": polled_at,
         "polled_hour_utc": polled_at.hour,
         "polled_weekday_utc": polled_at.strftime("%A"),
-        "cheapest_price": cheapest,
-        "latest_prices": latest,       # each entry has its own found_at
+        "cheapest_price": cheapest,          # from genuine fares only
+        "latest_prices": latest,             # each entry has found_at + suspect flag
         "prices_by_date": for_dates,
         "latest_count": len(latest),
+        "genuine_count": len(genuine),
+        "suspect_count": suspect_count,
     }
 
     (db.collection("price_snapshots")
@@ -190,7 +227,7 @@ def write_snapshot(db, route: dict, latest: list[dict], for_dates: list[dict],
        .document(doc_id)
        .set(doc))
 
-    return cheapest
+    return cheapest, len(genuine), suspect_count
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +246,11 @@ def main():
         try:
             latest = parse_latest(fetch_latest_prices(token, **route))
             for_dates = parse_for_dates(fetch_prices_for_dates(token, **route))
-            cheapest = write_snapshot(db, route, latest, for_dates, polled_at)
-            print(f"[OK] {label}: cheapest {cheapest} {CURRENCY.upper()} "
-                  f"({len(latest)} latest entries, {len(for_dates)} date entries)")
+            cheapest, genuine_n, suspect_n = write_snapshot(
+                db, route, latest, for_dates, polled_at)
+            print(f"[OK] {label}: cheapest {cheapest} {CURRENCY_REQUESTED.upper()} "
+                  f"({genuine_n} genuine, {suspect_n} suspect, "
+                  f"{len(for_dates)} date entries)")
         except Exception as exc:  # log and continue with other routes
             errors.append(f"{label}: {exc}")
             print(f"[ERROR] {label}: {exc}", file=sys.stderr)

@@ -59,14 +59,25 @@ price_snapshots/
         prices_by_date: [ {price, departure_date, airline, flight_number, transfers} ]
 ```
 
+## Currency
+
+The v2 latest-prices endpoint ignores the currency parameter and returns **USD** for these routes (confirmed: international gates like Clickavia/Kiwi/Trip.com quote USD, and the magnitudes match USD not AUD — e.g. ~US$102 ≈ A$155 for HBA→SYD). The script requests USD explicitly and stamps every record with `currency: "usd"`. Convert to AUD at analysis time if you want AUD figures. Pattern analysis (hour/day) is unaffected, since the currency is consistent across all polls.
+
+## Data quality: the `suspect` flag
+
+Not every row is a genuine observed fare. The endpoint pads results with calendar-estimate / cache-filler rows that share a signature: blank `gate`, `distance_km` of 0, and a round-midnight `found_at` (a daily bulk refresh, not a real user search). Each `latest_prices` entry now carries a boolean `suspect` flag, and each poll records `genuine_count` and `suspect_count`.
+
+**For any time-of-day analysis, filter to `suspect == false`.** The midnight-filler rows all share the same timestamp and would swamp genuine hour-of-day signal. The headline `cheapest_price` is already computed from genuine fares only.
+
 ## Analysis notes
 
-- **Timezone**: `found_at` timestamps are in the API's timezone (treat as UTC unless docs state otherwise, then convert). Hobart is UTC+10 (AEST) / UTC+11 (AEDT) — convert before testing the "Tuesday 3am" hypothesis
-- Build the analysis dataset from deduplicated `latest_prices` entries across all polls, keyed on `found_at`
-- Group by local hour-of-day and day-of-week of `found_at`; compare medians. Also check *observation counts* per hour — a cheap price at 3am means little if there were only two observations at 3am all month
+- **Timezone**: `found_at` timestamps are UTC. Hobart is UTC+10 (AEST) / UTC+11 (AEDT) — convert before testing the "Tuesday 3am" hypothesis
+- Build the analysis dataset from deduplicated **genuine** `latest_prices` entries across all polls, keyed on `found_at`
+- Group by local hour-of-day and day-of-week of `found_at`; compare medians. Also check *observation counts* per hour — a cheap price at 3am means little if there were only two genuine observations at 3am all month
 - The `gate` field shows which agency displayed the price — useful for spotting outliers from a single discount agency rather than genuine airline repricing
-- Compare routes: HBA-SYD (Qantas/Jetstar/Virgin) vs HBA-OOL (Jetstar direct). Jetstar sale launches are the closest real-world event to the "random dip" folklore
-- Run for at least 4–6 weeks; the cached nature of the data means patience matters even more here
+- Compare routes: HBA-SYD / HBA-MEL (Qantas/Jetstar/Virgin) vs HBA-OOL (Jetstar direct). Jetstar sale launches are the closest real-world event to the "random dip" folklore
+- Prices are cheapest cached fares across many departure dates, not today's checkout price — expect them to look lower than jetstar.com, which shows real bookable GST-inclusive AUD fares
+- Run for at least 4–6 weeks
 
 ## Extending
 
