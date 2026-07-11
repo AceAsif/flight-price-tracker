@@ -31,6 +31,7 @@ from firebase_admin import credentials, firestore
 ROUTES = [
     {"origin": "HBA", "destination": "SYD"},
     {"origin": "HBA", "destination": "OOL"},
+    {"origin": "HBA", "destination": "MEL"},
 ]
 
 CURRENCY = "aud"
@@ -45,13 +46,13 @@ MAX_ENTRIES = 30
 # ---------------------------------------------------------------------------
 
 def fetch_latest_prices(token: str, origin: str, destination: str) -> list[dict]:
-    """v1 'latest prices' endpoint.
+    """v2 'latest prices' endpoint.
 
     Returns cached prices observed during the last 48 hours, each with a
     `found_at` timestamp - the key field for repricing analysis.
     """
     resp = requests.get(
-        f"{API_BASE}/v1/prices/latest",
+        f"{API_BASE}/v2/prices/latest",
         headers={"X-Access-Token": token},
         params={
             "origin": origin,
@@ -59,9 +60,10 @@ def fetch_latest_prices(token: str, origin: str, destination: str) -> list[dict]
             "currency": CURRENCY,
             "period_type": "year",   # any departure date in the coming year
             "one_way": "true",
-            "show_to_affiliates": "false",  # include all found prices, not only affiliate ones
+            "page": 1,
             "limit": MAX_ENTRIES,
             "sorting": "price",
+            "trip_class": 0,         # 0 = economy
         },
         timeout=60,
     )
@@ -96,10 +98,29 @@ def fetch_prices_for_dates(token: str, origin: str, destination: str) -> list[di
     return payload.get("data", [])
 
 
-def parse_latest(entries: list[dict]) -> list[dict]:
-    """Normalise v1 latest-prices records."""
+def parse_latest(entries) -> list[dict]:
+    """Normalise v2 latest-prices records.
+
+    v2 returns `data` as a flat list. Guard against an unexpected dict shape
+    (older/alternate responses sometimes nest by destination) so the run
+    fails loudly rather than silently.
+    """
+    if isinstance(entries, dict):
+        # Flatten one level of nesting if the API returns a keyed structure
+        flattened = []
+        for v in entries.values():
+            if isinstance(v, dict):
+                flattened.extend(v.values())
+            else:
+                flattened.append(v)
+        entries = flattened
+    if not isinstance(entries, list):
+        return []
+
     parsed = []
     for e in entries:
+        if not isinstance(e, dict):
+            continue
         parsed.append({
             "price": e.get("value"),
             "departure_date": e.get("depart_date"),
