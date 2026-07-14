@@ -46,13 +46,18 @@ def export(db):
     rows = []
     seen = set()  # dedupe key across overlapping polls
 
-    snapshots = db.collection("price_snapshots").stream()
-    for route_doc in snapshots:
-        route_key = route_doc.id  # e.g. "HBA-SYD"
-        polls = (db.collection("price_snapshots")
-                   .document(route_key)
-                   .collection("polls")
-                   .stream())
+    # NOTE: route documents (HBA-SYD etc.) are "phantom" parents - they hold no
+    # fields of their own, only a `polls` subcollection. .stream() skips
+    # field-less documents, so we use .list_documents(), which returns every
+    # document reference including phantom parents.
+    route_refs = list(db.collection("price_snapshots").list_documents())
+    print(f"Found {len(route_refs)} route document(s): "
+          f"{[r.id for r in route_refs]}")
+
+    for route_ref in route_refs:
+        route_key = route_ref.id  # e.g. "HBA-SYD"
+        polls = list(route_ref.collection("polls").stream())
+        print(f"  {route_key}: {len(polls)} poll(s)")
 
         for poll in polls:
             data = poll.to_dict()
