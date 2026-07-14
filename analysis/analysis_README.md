@@ -23,7 +23,14 @@ Outputs:
 - `plot_by_hour.png` — median fare by local hour, per route
 - `plot_by_weekday.png` — median fare by weekday, per route
 - `plot_heatmap.png` — hour × weekday heatmap (the direct "Tuesday 3am" test)
+- `plot_cheapest_combined.png` — combined answer: cheapest slot per route, with the cheapest reliable slot ringed in black and the observation count printed in each cell
 - printed summary tables + an ANOVA testing whether hour/weekday explain price
+
+## How to read a ringed cell (IMPORTANT: one ring ≠ proof)
+
+The black ring on `plot_cheapest_combined.png` marks the cheapest slot that has at least `MIN_OBS` observations. That threshold is the **minimum to be worth looking at, not evidence that the pattern is real.** A ring sitting on a cell with just 3-4 observations is a *hypothesis to watch*, not a finding — a couple of stray cheap fares landing in one cell is enough to create it.
+
+The only real test is **persistence**: a genuine pattern stays in the same cell (and gets more clearly ringed) as weeks of data accumulate; a fluke drifts elsewhere or vanishes. So before believing any "cheapest = <day> <hour>" claim: (1) check the observation count in that cell is high, not just ≥ MIN_OBS; (2) re-run a few weeks later and confirm the ring is still there; (3) check the ANOVA actually reports a significant time effect for that route. Until all three hold, treat a ring as "interesting," not "true."
 
 ## Reading the results
 
