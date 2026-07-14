@@ -1,6 +1,6 @@
 """
 Flight Price Tracker (Travelpayouts Data API - free tier)
-Polls cached Aviasales price data for HBA-SYD and HBA-OOL and logs
+Polls cached Aviasales price data for HBA-SYD, HBA-MEL and HBA-BNE and logs
 snapshots to Firestore for time-of-day / day-of-week analysis.
 
 IMPORTANT: This API returns CACHED prices from real user searches on
@@ -32,7 +32,7 @@ from firebase_admin import credentials, firestore
 
 ROUTES = [
     {"origin": "HBA", "destination": "SYD"},
-    {"origin": "HBA", "destination": "OOL"},
+    {"origin": "HBA", "destination": "BNE"},
     {"origin": "HBA", "destination": "MEL"},
 ]
 

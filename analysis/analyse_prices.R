@@ -146,5 +146,62 @@ for (r in unique(df$route)) {
   print(summary(fit))
 }
 
-cat("\nDone. Plots written: plot_by_hour.png, plot_by_weekday.png, plot_heatmap.png\n")
-cat("Reminder: interpret cells with few observations cautiously.\n")
+# =============================================================================
+# 5. Combined "cheapest slot" summary - one picture, all routes.
+#    Shows, for each route, the median fare in every hour x weekday cell that
+#    HAS DATA, and highlights the single cheapest reliable slot per route.
+#    Reliability guard: a slot needs at least MIN_OBS observations to be
+#    eligible as "the cheapest", so a lone fluke fare can't win.
+# =============================================================================
+MIN_OBS <- 3   # raise this as data grows (e.g. 5-10 after a few weeks)
+
+slot <- df %>%
+  group_by(route, wday_local, hour_local) %>%
+  summarise(median_aud = median(price_aud), n = n(), .groups = "drop")
+
+# The cheapest *reliable* slot per route (enough observations to trust)
+cheapest_slot <- slot %>%
+  filter(n >= MIN_OBS) %>%
+  group_by(route) %>%
+  slice_min(median_aud, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+cat("\n--- Cheapest reliable slot per route (>= ", MIN_OBS,
+    " observations) ---\n", sep = "")
+if (nrow(cheapest_slot) == 0) {
+  cat("No slot yet has enough observations to call reliably.\n")
+  cat("This is expected early on - let the data accumulate.\n")
+} else {
+  cheapest_slot %>%
+    transmute(route, weekday = wday_local, hour_local,
+              median_aud = round(median_aud), n) %>%
+    arrange(median_aud) %>%
+    print()
+}
+
+# Combined single-picture view: faceted heatmap with the cheapest reliable
+# slot ringed, and observation counts printed in each cell so you can see
+# at a glance which cells are trustworthy.
+p_combined <- ggplot(slot, aes(hour_local, wday_local)) +
+  geom_tile(aes(fill = median_aud)) +
+  geom_text(aes(label = n), size = 2.6, colour = "grey20") +
+  # Ring the cheapest reliable slot per route
+  geom_tile(data = cheapest_slot, fill = NA, colour = "black", linewidth = 1.1) +
+  facet_wrap(~ route) +
+  scale_fill_viridis_c(option = "plasma", name = "Median AUD") +
+  scale_x_continuous(breaks = seq(0, 23, 3)) +
+  labs(
+    title    = "Cheapest fare by hour x weekday (local Hobart time)",
+    subtitle = paste0("Number in each cell = observations. Black ring = cheapest slot ",
+                      "with >= ", MIN_OBS, " obs. Empty cells have no data yet."),
+    x = "Hour of day (local)", y = NULL
+  ) +
+  theme_minimal()
+
+ggsave("plot_cheapest_combined.png", p_combined, width = 11, height = 6, dpi = 120)
+
+cat("\nDone. Plots written: plot_by_hour.png, plot_by_weekday.png, ",
+    "plot_heatmap.png, plot_cheapest_combined.png\n", sep = "")
+cat("Reminder: cells with few observations are noise. The black ring only\n")
+cat("appears once a slot clears the MIN_OBS threshold - trust that, not the\n")
+cat("brightest raw cell. Raise MIN_OBS as weeks of data accumulate.\n")

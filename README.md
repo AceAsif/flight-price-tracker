@@ -1,6 +1,6 @@
 # Flight Price Tracker (Free — Travelpayouts Data API)
 
-Hourly tracking of cached flight prices for HBA→SYD (competitive route) and HBA→OOL (single-carrier route), to look for day-of-week and time-of-day price patterns.
+Hourly tracking of cached flight prices for HBA→SYD, HBA→MEL, and HBA→BNE (all competitive multi-carrier routes), to look for day-of-week and time-of-day price patterns.
 
 ## Important: what this data is (and is not)
 
@@ -10,7 +10,7 @@ Consequences for the experiment:
 
 - **Analyse on `found_at`, not poll time.** The hourly poll just harvests whatever new cache entries appeared; `found_at` tells you when a price actually existed.
 - **Day-of-week and trend analysis: solid.** Enough data accumulates over weeks to compare weekdays and track volatility.
-- **Hour-of-day analysis: indicative only.** On thin routes (HBA→OOL especially) there may be hours with no searches, so overnight windows can be blind. Treat hourly conclusions as suggestive, not definitive.
+- **Hour-of-day analysis: indicative only.** On thin routes there may be hours with no searches, so overnight windows can be blind. Treat hourly conclusions as suggestive, not definitive.
 - Deduplicate: the same `found_at` entry will appear in multiple consecutive polls (the endpoint returns ~48h of observations). Dedupe on `(departure_date, found_at, price)` at analysis time.
 
 ## How it works
@@ -75,7 +75,7 @@ Not every row is a genuine observed fare. The endpoint pads results with calenda
 - Build the analysis dataset from deduplicated **genuine** `latest_prices` entries across all polls, keyed on `found_at`
 - Group by local hour-of-day and day-of-week of `found_at`; compare medians. Also check *observation counts* per hour — a cheap price at 3am means little if there were only two genuine observations at 3am all month
 - The `gate` field shows which agency displayed the price — useful for spotting outliers from a single discount agency rather than genuine airline repricing
-- Compare routes: HBA-SYD / HBA-MEL (Qantas/Jetstar/Virgin) vs HBA-OOL (Jetstar direct). Jetstar sale launches are the closest real-world event to the "random dip" folklore
+- Compare routes: HBA-SYD, HBA-MEL, and HBA-BNE are all served by Qantas/Jetstar/Virgin. Airline sale launches are the closest real-world event to the "random dip" folklore
 - Prices are cheapest cached fares across many departure dates, not today's checkout price — expect them to look lower than jetstar.com, which shows real bookable GST-inclusive AUD fares
 - Run for at least 4–6 weeks
 

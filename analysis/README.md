@@ -30,7 +30,7 @@ Outputs:
 - The script filters to **genuine** fares only (drops cache-filler) and converts USD→AUD with a rough 1.5 rate — update `USD_TO_AUD` in the script for a current rate.
 - `found_at` is converted from UTC to `Australia/Hobart` (handles AEST/AEDT automatically). All hour/weekday grouping is in local time, so "Tuesday 3am" means Tuesday 3am in Hobart.
 - **Watch observation counts.** A cheap-looking hour with only 2-3 observations is noise. Plots encode count as bar opacity; faint bars are unreliable. The ANOVA only runs once a route has enough data.
-- HBA-OOL may stay empty (Aviasales has little cached data for that route). If so, the analysis simply focuses on HBA-SYD and HBA-MEL.
+- Routes with little Aviasales search traffic may return sparse data. The analysis simply focuses on whichever routes have enough genuine observations.
 
 ## Note on the currency rate
 
