@@ -17,7 +17,9 @@ Required environment variables (set as GitHub Actions secrets):
 
 import json
 import os
+import random
 import sys
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -48,10 +50,50 @@ API_BASE = "https://api.travelpayouts.com"
 # How many of the cheapest cached entries to keep per poll
 MAX_ENTRIES = 30
 
+# Rate-limit handling. Travelpayouts throttles per minute and returns 420/429
+# when too many requests arrive too quickly (the shared GitHub Actions runner
+# IP can also be throttled). We pause between routes and retry with backoff.
+DELAY_BETWEEN_CALLS = 3      # seconds to wait between each API call
+MAX_RETRIES = 4             # attempts per call before giving up
+RETRY_BACKOFF_BASE = 5      # seconds; grows 5, 10, 20, 40 with jitter
+RATE_LIMIT_CODES = {420, 429}
+
 
 # ---------------------------------------------------------------------------
 # Travelpayouts Data API
 # ---------------------------------------------------------------------------
+
+def _get_with_retry(url: str, token: str, params: dict) -> dict:
+    """GET a Data API endpoint with retry/backoff on rate-limit responses.
+
+    Travelpayouts returns 420/429 when requests arrive too fast. We honour the
+    Retry-After header if present, otherwise back off exponentially with jitter.
+    Raises on non-rate-limit HTTP errors and after exhausting retries.
+    """
+    last_exc = None
+    for attempt in range(MAX_RETRIES):
+        resp = requests.get(url, headers={"X-Access-Token": token},
+                            params=params, timeout=60)
+        if resp.status_code in RATE_LIMIT_CODES:
+            # Prefer server-suggested wait; else exponential backoff + jitter
+            retry_after = resp.headers.get("Retry-After")
+            if retry_after and retry_after.isdigit():
+                wait = int(retry_after)
+            else:
+                wait = RETRY_BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 2)
+            print(f"    rate-limited ({resp.status_code}); "
+                  f"retry {attempt + 1}/{MAX_RETRIES} in {wait:.0f}s", file=sys.stderr)
+            last_exc = requests.HTTPError(f"{resp.status_code} rate limited")
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        payload = resp.json()
+        if not payload.get("success", False):
+            raise RuntimeError(f"API reported failure: {payload}")
+        return payload
+    # Exhausted retries
+    raise last_exc if last_exc else RuntimeError("request failed")
+
 
 def fetch_latest_prices(token: str, origin: str, destination: str) -> list[dict]:
     """v2 'latest prices' endpoint.
@@ -59,10 +101,10 @@ def fetch_latest_prices(token: str, origin: str, destination: str) -> list[dict]
     Returns cached prices observed during the last 48 hours, each with a
     `found_at` timestamp - the key field for repricing analysis.
     """
-    resp = requests.get(
+    payload = _get_with_retry(
         f"{API_BASE}/v2/prices/latest",
-        headers={"X-Access-Token": token},
-        params={
+        token,
+        {
             "origin": origin,
             "destination": destination,
             "currency": CURRENCY,
@@ -73,22 +115,17 @@ def fetch_latest_prices(token: str, origin: str, destination: str) -> list[dict]
             "sorting": "price",
             "trip_class": 0,         # 0 = economy
         },
-        timeout=60,
     )
-    resp.raise_for_status()
-    payload = resp.json()
-    if not payload.get("success", False):
-        raise RuntimeError(f"API reported failure: {payload}")
     return payload.get("data", [])
 
 
 def fetch_prices_for_dates(token: str, origin: str, destination: str) -> list[dict]:
     """v3 'prices_for_dates' endpoint - cheapest cached fare per departure
     date. Complements the latest-prices view with a calendar-style series."""
-    resp = requests.get(
+    payload = _get_with_retry(
         f"{API_BASE}/aviasales/v3/prices_for_dates",
-        headers={"X-Access-Token": token},
-        params={
+        token,
+        {
             "origin": origin,
             "destination": destination,
             "currency": CURRENCY,
@@ -97,12 +134,7 @@ def fetch_prices_for_dates(token: str, origin: str, destination: str) -> list[di
             "sorting": "price",
             "limit": MAX_ENTRIES,
         },
-        timeout=60,
     )
-    resp.raise_for_status()
-    payload = resp.json()
-    if not payload.get("success", False):
-        raise RuntimeError(f"API reported failure: {payload}")
     return payload.get("data", [])
 
 
@@ -241,10 +273,11 @@ def main():
 
     errors = []
 
-    for route in ROUTES:
+    for i, route in enumerate(ROUTES):
         label = f"{route['origin']}->{route['destination']}"
         try:
             latest = parse_latest(fetch_latest_prices(token, **route))
+            time.sleep(DELAY_BETWEEN_CALLS)  # space the two calls apart
             for_dates = parse_for_dates(fetch_prices_for_dates(token, **route))
             cheapest, genuine_n, suspect_n = write_snapshot(
                 db, route, latest, for_dates, polled_at)
@@ -254,6 +287,10 @@ def main():
         except Exception as exc:  # log and continue with other routes
             errors.append(f"{label}: {exc}")
             print(f"[ERROR] {label}: {exc}", file=sys.stderr)
+
+        # Pause between routes so we stay well under the per-minute limit
+        if i < len(ROUTES) - 1:
+            time.sleep(DELAY_BETWEEN_CALLS)
 
     if errors:
         sys.exit(1)
