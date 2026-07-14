@@ -3,3 +3,4 @@
 __pycache__/
 analysis/prices.csv
 analysis/*.png
+analysis/.Rhistory
